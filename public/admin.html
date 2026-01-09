@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#4A90E2">
+    <title>Mobile Admin — UploadYuk</title>
+    <link rel="icon" type="image/png" href="favicon.png">
+    
+    <style>
+        :root { 
+            --sky-blue: #87CEEB; 
+            --deep-blue: #4A90E2; 
+            --dark: #2c3e50; 
+            --bg: #f0f7ff; 
+            --white: #ffffff;
+        }
+        
+        body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); margin: 0; padding-bottom: 50px; }
+
+        /* --- LOGIN SECTION BEAUTIFIED --- */
+        #login-overlay { 
+            position: fixed; 
+            inset: 0; 
+            background: linear-gradient(135deg, var(--sky-blue) 0%, var(--deep-blue) 100%); 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            z-index: 2000; 
+            padding: 20px; 
+        }
+
+        .login-card { 
+            background: rgba(255, 255, 255, 0.95); 
+            backdrop-filter: blur(10px);
+            padding: 40px 30px; 
+            border-radius: 24px; 
+            width: 100%; 
+            max-width: 360px; 
+            text-align: center; 
+            box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+            animation: cardAppear 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes cardAppear {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .login-card img { 
+            border-radius: 50%; 
+            margin-bottom: 15px;
+            border: 4px solid var(--sky-blue);
+        }
+
+        .login-card h3 { 
+            margin: 0 0 10px; 
+            color: var(--dark); 
+            font-size: 22px; 
+            font-weight: 800;
+        }
+
+        .login-card p {
+            font-size: 14px;
+            color: #64748b;
+            margin-bottom: 25px;
+        }
+
+        .input-group {
+            position: relative;
+            margin-bottom: 15px;
+        }
+
+        #passInput { 
+            width: 100%; 
+            padding: 14px 18px; 
+            border: 2px solid #e2e8f0; 
+            border-radius: 12px; 
+            box-sizing: border-box; 
+            font-size: 16px;
+            transition: all 0.3s ease;
+            outline: none;
+            background: #f8fafc;
+        }
+
+        #passInput:focus { 
+            border-color: var(--deep-blue); 
+            background: white;
+            box-shadow: 0 0 0 4px rgba(74, 144, 226, 0.1);
+        }
+
+        .login-btn { 
+            width: 100%; 
+            padding: 14px; 
+            background: var(--deep-blue); 
+            color: white; 
+            border: none; 
+            border-radius: 12px; 
+            font-weight: 700; 
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.2s;
+            box-shadow: 0 4px 12px rgba(74, 144, 226, 0.3);
+        }
+
+        .login-btn:active { 
+            transform: scale(0.98); 
+            background: #357abd;
+        }
+
+        /* --- DASHBOARD SECTION --- */
+        .dashboard { display: none; padding: 15px; }
+
+        .monitor-card { background: white; border-radius: 20px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        .storage-bar-container { background: #eee; height: 12px; border-radius: 10px; margin: 15px 0; overflow: hidden; }
+        #storage-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #87CEEB, #4A90E2); transition: 1s ease-in-out; }
+        
+        .header-mobile { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-top: 10px; }
+        .clock { font-weight: 800; color: var(--deep-blue); font-size: 1.2rem; }
+
+        .grid-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+        .stat-box { background: white; padding: 15px; border-radius: 15px; text-align: center; border: 1px solid #e2e8f0; }
+
+        .file-item { background: white; padding: 12px; border-radius: 15px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; border: 1px solid #e2e8f0; }
+        .file-thumb { width: 50px; height: 50px; border-radius: 10px; object-fit: cover; background: #f0f7ff; }
+        .file-info { flex: 1; min-width: 0; }
+        .file-name { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        
+        .btn-del { background: #fee2e2; color: #ef4444; border: none; padding: 8px; border-radius: 8px; cursor: pointer; transition: 0.2s; }
+        .btn-del:active { transform: scale(0.9); background: #fecaca; }
+        
+        .fab { position: fixed; bottom: 20px; right: 20px; background: var(--deep-blue); color: white; width: 56px; height: 56px; border-radius: 28px; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 20px rgba(74, 144, 226, 0.4); border: none; z-index: 100; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div id="login-overlay">
+        <div class="login-card">
+            <img src="https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3N5ZnR3Z3p3eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4JmVwPXYxX2ludGVybmFsX2dpZl9ieV9iZCZjdD1n/SWoXE9Lh1O43P55Ysh/giphy.gif" width="90" height="90">
+            <h3>Admin Panel</h3>
+            <p>Masukkan kunci keamanan untuk mengelola sistem UploadYuk.</p>
+            
+            <div class="input-group">
+                <input type="password" id="passInput" placeholder="Security Key" onkeypress="if(event.key === 'Enter') login()">
+            </div>
+            
+            <button class="login-btn" onclick="login()">OTENTIKASI</button>
+            
+            <div style="margin-top: 20px; font-size: 11px; color: #94a3b8; letter-spacing: 1px;">
+                SECURED BY UPLOADYUK SYSTEM
+            </div>
+        </div>
+    </div>
+
+    <div class="dashboard" id="dashboard">
+        <div class="header-mobile">
+            <div>
+                <h2 style="margin:0; font-size: 20px; font-weight: 800; color: var(--dark);">Halo Admin</h2>
+                <div id="date-text" style="font-size: 12px; color: #64748b; font-weight: 500;">Memuat...</div>
+            </div>
+            <div class="clock" id="clock-text">00:00</div>
+        </div>
+
+        <div class="monitor-card">
+            <div style="display:flex; justify-content:space-between; align-items:center">
+                <span style="font-size:11px; font-weight:800; color:var(--dark); letter-spacing: 0.5px;">⚡ SYSTEM RESOURCES</span>
+                <span id="ram-percent" style="font-size:12px; font-weight: 800; color:var(--deep-blue)">0%</span>
+            </div>
+            <div class="storage-bar-container">
+                <div id="storage-bar"></div>
+            </div>
+            <div style="display:flex; align-items:center; gap:5px">
+                <div style="width:8px; height:8px; border-radius:50%; background:#2ecc71; animation: pulse 2s infinite"></div>
+                <span id="ram-text" style="font-size: 11px; color:#64748b; font-weight: 500;">System Online</span>
+            </div>
+        </div>
+
+        <div class="grid-stats">
+            <div class="stat-box">
+                <div style="font-size:10px; color:#94a3b8; font-weight:700; margin-bottom: 5px;">TOTAL MEDIA</div>
+                <div id="stat-total" style="font-size:22px; font-weight:900; color:var(--dark)">0</div>
+            </div>
+            <div class="stat-box">
+                <div style="font-size:10px; color:#94a3b8; font-weight:700; margin-bottom: 5px;">SYSTEM UPTIME</div>
+                <div id="stat-uptime" style="font-size:18px; font-weight:900; color:var(--deep-blue)">0h</div>
+            </div>
+        </div>
+
+        <h3 style="font-size: 16px; margin: 25px 0 15px; color: var(--dark); font-weight: 800; display: flex; align-items: center; gap: 8px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+            Repository Media
+        </h3>
+        <div id="file-list-mobile"></div>
+    </div>
+
+    <button class="fab" onclick="loadData()">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+    </button>
+
+    <script>
+        // Animasi pulse untuk status RAM
+        const style = document.createElement('style');
+        style.textContent = `@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }`;
+        document.head.appendChild(style);
+
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('clock-text').innerText = now.toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'});
+            document.getElementById('date-text').innerText = now.toLocaleDateString('id-ID', {weekday:'long', day:'numeric', month:'long'});
+        }
+        setInterval(updateTime, 1000);
+
+        function login() {
+            const pass = document.getElementById('passInput').value;
+            if (pass === 'zackadmin') {
+                localStorage.setItem('admin_auth', 'zackadmin');
+                location.reload();
+            } else {
+                alert('Otentikasi Gagal! Password Salah.');
+                document.getElementById('passInput').value = '';
+            }
+        }
+
+        window.onload = () => {
+            if (localStorage.getItem('admin_auth') === 'zackadmin') {
+                document.getElementById('login-overlay').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
+                loadData();
+                setInterval(loadData, 15000); 
+            }
+        };
+
+        async function loadData() {
+            try {
+                const sRes = await fetch('/api/admin/stats-system');
+                const stats = await sRes.json();
+                document.getElementById('ram-percent').innerText = stats.ramPercent + '%';
+                document.getElementById('storage-bar').style.width = stats.ramPercent + '%';
+                document.getElementById('ram-text').innerText = stats.ramText;
+                document.getElementById('stat-uptime').innerText = stats.uptime;
+
+                const fRes = await fetch('/api/list');
+                const files = await fRes.json();
+                document.getElementById('stat-total').innerText = files.length;
+
+                const container = document.getElementById('file-list-mobile');
+                container.innerHTML = files.reverse().map(f => `
+                    <div class="file-item" style="animation: cardAppear 0.4s ease forwards">
+                        <img src="/${f.generatedName}" class="file-thumb" onerror="this.src='https://cdn-icons-png.flaticon.com/512/124/124837.png'">
+                        <div class="file-info">
+                            <div class="file-name">${f.originalName}</div>
+                            <div style="font-size:10px; color:#64748b; font-weight:500">ID: /${f.generatedName}</div>
+                        </div>
+                        <button class="btn-del" onclick="deleteFile('${f.generatedName}')">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        </button>
+                    </div>
+                `).join('');
+            } catch (e) { console.log("Refresh gagal"); }
+        }
+
+        async function deleteFile(name) {
+            if (confirm('Tindakan ini permanen. Hapus file?')) {
+                await fetch(`/api/admin/delete/${name}`, { method: 'DELETE' });
+                loadData();
+            }
+        }
+    </script>
+</body>
+</html>
