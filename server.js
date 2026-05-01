@@ -8,17 +8,27 @@ const crypto = require('crypto');
 const app = express();
 const PORT = 3000;
 
-if (!fs.existsSync('./uploads')) {
-    fs.mkdirSync('./uploads');
+
+);
+
+// Gunakan /tmp untuk semua operasi write
+const TMP_DIR = '/tmp';
+const UPLOADS_DIR = path.join(TMP_DIR, 'uploads');
+const DB_PATH = path.join(TMP_DIR, 'database.json');
+
+// Buat folder yang diperlukan di /tmp
+if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
 const generateRandomCode = (length) => {
     return crypto.randomBytes(length).toString('hex').slice(0, length);
 };
 
+// Gunakan memory storage dulu, lalu simpan ke /tmp
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        cb(null, './uploads');
+        cb(null, UPLOADS_DIR);  // ← pakai /tmp/uploads
     },
     filename: (req, file, cb) => {
         const randomCode = generateRandomCode(5);
@@ -32,9 +42,9 @@ const upload = multer({ storage: storage });
 app.use(express.static('public'));
 app.use(express.json());
 
-const dbPath = './data/database.json';
-if (!fs.existsSync(dbPath)) {
-    fs.writeFileSync(dbPath, JSON.stringify([]));
+// Inisialisasi database di /tmp
+if (!fs.existsSync(DB_PATH)) {
+    fs.writeFileSync(DB_PATH, JSON.stringify([]));
 }
 
 app.post('/api/v1/upload', upload.single('media'), (req, res) => {
@@ -42,7 +52,7 @@ app.post('/api/v1/upload', upload.single('media'), (req, res) => {
         return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const db = JSON.parse(fs.readFileSync(dbPath));
+    const db = JSON.parse(fs.readFileSync(DB_PATH));
     const fileData = {
         id: Date.now(),
         originalName: req.file.originalname,
@@ -51,8 +61,20 @@ app.post('/api/v1/upload', upload.single('media'), (req, res) => {
     };
 
     db.push(fileData);
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
+    fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+    
+    // ⚠️ PERINGATAN: File di /tmp akan hilang setelah Lambda cold start!
     res.json(fileData);
+});
+
+// Endpoint untuk serve file dari /tmp
+app.get('/:filename', (req, res) => {
+    const filePath = path.join(UPLOADS_DIR, req.params.filename);
+    if (fs.existsSync(filePath)) {
+        res.sendFile(filePath);
+    } else {
+        res.status(404).json({ error: 'File not found' });
+    }
 });
 
 
