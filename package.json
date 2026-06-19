@@ -7,11 +7,13 @@ const os = require('os');
 
 const app = express();
 
+// ========== PAKAI /tmp BUKAN ./uploads ==========
 const UPLOAD_DIR = '/tmp/uploads';
 const DB_PATH = '/tmp/database.json';
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const FILE_EXPIRY_MINUTES = 10;
 
+// Buat folder di /tmp (BUKAN ./uploads)
 if (!fs.existsSync(UPLOAD_DIR)) {
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
@@ -26,7 +28,7 @@ const generateRandomCode = (length) => {
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        cb(null, UPLOAD_DIR);
+        cb(null, UPLOAD_DIR); // PAKAI /tmp/uploads
     },
     filename: (req, file, cb) => {
         const randomCode = generateRandomCode(5);
@@ -228,7 +230,7 @@ app.use((err, req, res, next) => {
     if (err instanceof multer.MulterError) {
         if (err.code === 'FILE_TOO_LARGE') {
             return res.status(413).json({
-                error: `File terlalu besar! Maksimal 10MB`
+                error: 'File terlalu besar! Maksimal 10MB'
             });
         }
         return res.status(400).json({ error: err.message });
@@ -298,8 +300,8 @@ module.exports = app;
 if (require.main === module) {
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
-        console.log(`UploadYuk Running on port ${PORT}`);
-        console.log(`Max file size: 10MB`);
-        console.log(`Auto delete after: 10 minutes`);
+        console.log('UploadYuk Running on port ' + PORT);
+        console.log('Max file size: 10MB');
+        console.log('Auto delete after: 10 minutes');
     });
 }
