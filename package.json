@@ -1,21 +1,305 @@
-{
-  "name": "uploadyuk",
-  "version": "1.2.0",
-  "description": "Upload file app with Vercel",
-  "main": "server.js",
-  "scripts": {
-    "dev": "nodemon server.js",
-    "start": "node server.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "express": "^4.18.2",
-    "multer": "^1.4.5-lts.1"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
-  }
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const os = require('os');
+
+const app = express();
+
+const UPLOAD_DIR = '/tmp/uploads';
+const DB_PATH = '/tmp/database.json';
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const FILE_EXPIRY_MINUTES = 10;
+
+if (!fs.existsSync(UPLOAD_DIR)) {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+
+if (!fs.existsSync(DB_PATH)) {
+    fs.writeFileSync(DB_PATH, JSON.stringify([]));
+}
+
+const generateRandomCode = (length) => {
+    return crypto.randomBytes(length).toString('hex').slice(0, length);
+};
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, UPLOAD_DIR);
+    },
+    filename: (req, file, cb) => {
+        const randomCode = generateRandomCode(5);
+        const extension = path.extname(file.originalname);
+        cb(null, randomCode + extension);
+    }
+});
+
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: MAX_FILE_SIZE
+    }
+});
+
+app.use(express.static('public'));
+app.use(express.json());
+
+const deleteExpiredFiles = () => {
+    try {
+        const db = JSON.parse(fs.readFileSync(DB_PATH));
+        const now = Date.now();
+        const expiryMs = FILE_EXPIRY_MINUTES * 60 * 1000;
+        let deletedCount = 0;
+
+        const validFiles = db.filter(file => {
+            const fileAge = now - file.uploadTime;
+            const isExpired = fileAge > expiryMs;
+
+            if (isExpired) {
+                const filePath = path.join(UPLOAD_DIR, file.generatedName);
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                    deletedCount++;
+                }
+                return false;
+            }
+            return true;
+        });
+
+        if (deletedCount > 0) {
+            fs.writeFileSync(DB_PATH, JSON.stringify(validFiles, null, 2));
+        }
+    } catch (error) {
+        console.error('Delete error:', error);
+    }
+};
+
+setInterval(deleteExpiredFiles, 60 * 1000);
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+app.get('/docs', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'docs.html'));
+});
+
+app.post('/api/v1/upload', upload.single('media'), (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        const db = JSON.parse(fs.readFileSync(DB_PATH));
+        const fileData = {
+            id: Date.now(),
+            originalName: req.file.originalname,
+            generatedName: req.file.filename,
+            size: req.file.size,
+            sizeText: (req.file.size / 1024 / 1024).toFixed(2) + ' MB',
+            uploadTime: Date.now(),
+            expiresAt: new Date(Date.now() + FILE_EXPIRY_MINUTES * 60 * 1000).toISOString(),
+            expiresIn: `${FILE_EXPIRY_MINUTES} menit`,
+            url: `${req.protocol}://${req.get('host')}/${req.file.filename}`
+        };
+
+        db.push(fileData);
+        fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+
+        res.json({
+            success: true,
+            message: 'File berhasil diupload!',
+            data: fileData
+        });
+    } catch (error) {
+        console.error('Upload error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/list', (req, res) => {
+    try {
+        const db = JSON.parse(fs.readFileSync(DB_PATH));
+        const now = Date.now();
+        const expiryMs = FILE_EXPIRY_MINUTES * 60 * 1000;
+
+        const filesWithExpiry = db.map(file => {
+            const remaining = Math.max(0, (file.uploadTime + expiryMs - now) / 1000);
+            return {
+                ...file,
+                remainingSeconds: Math.floor(remaining),
+                remainingText: remaining > 0 ?
+                    `${Math.floor(remaining / 60)}m ${Math.floor(remaining % 60)}s` :
+                    'Expired'
+            };
+        });
+
+        res.json(filesWithExpiry);
+    } catch (error) {
+        console.error('List error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/admin/full-stats', (req, res) => {
+    try {
+        const db = JSON.parse(fs.readFileSync(DB_PATH));
+        const now = Date.now();
+        const expiryMs = FILE_EXPIRY_MINUTES * 60 * 1000;
+
+        const activeFiles = db.filter(f => (now - f.uploadTime) < expiryMs);
+
+        const stats = {
+            total: db.length,
+            active: activeFiles.length,
+            expired: db.length - activeFiles.length,
+            images: db.filter(f => /\.(jpg|jpeg|png|gif|webp)$/i.test(f.generatedName)).length,
+            videos: db.filter(f => /\.(mp4|webm|mov|mkv)$/i.test(f.generatedName)).length,
+            others: db.filter(f => !/\.(jpg|jpeg|png|gif|webp|mp4|webm|mov|mkv)$/i.test(f.generatedName)).length,
+            totalSize: db.reduce((sum, f) => sum + (f.size || 0), 0),
+            totalSizeText: (db.reduce((sum, f) => sum + (f.size || 0), 0) / 1024 / 1024).toFixed(2) + ' MB'
+        };
+        res.json(stats);
+    } catch (error) {
+        console.error('Stats error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/admin/stats-system', (req, res) => {
+    try {
+        const totalMem = os.totalmem();
+        const freeMem = os.freemem();
+        const usedMem = totalMem - freeMem;
+
+        res.json({
+            ramPercent: ((usedMem / totalMem) * 100).toFixed(0),
+            ramText: `${(usedMem / 1024 / 1024 / 1024).toFixed(1)}GB / ${(totalMem / 1024 / 1024 / 1024).toFixed(1)}GB`,
+            platform: os.platform(),
+            uptime: (os.uptime() / 3600).toFixed(1) + ' Jam'
+        });
+    } catch (error) {
+        console.error('System stats error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/admin/login', (req, res) => {
+    try {
+        const { password } = req.body;
+        if (password === 'zackadmin') {
+            res.json({ success: true, token: 'zackadmin' });
+        } else {
+            res.status(401).json({ success: false, message: 'Password salah' });
+        }
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.delete('/api/admin/delete/:filename', (req, res) => {
+    try {
+        const filename = req.params.filename;
+        const filePath = path.join(UPLOAD_DIR, filename);
+
+        let db = JSON.parse(fs.readFileSync(DB_PATH));
+        db = db.filter(f => f.generatedName !== filename);
+        fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            res.json({ success: true, message: 'File dihapus' });
+        } else {
+            res.status(404).json({ success: false, message: 'File tidak ditemukan' });
+        }
+    } catch (error) {
+        console.error('Delete error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        if (err.code === 'FILE_TOO_LARGE') {
+            return res.status(413).json({
+                error: `File terlalu besar! Maksimal 10MB`
+            });
+        }
+        return res.status(400).json({ error: err.message });
+    }
+    next(err);
+});
+
+app.get('/:filename', (req, res) => {
+    const filePath = path.join(UPLOAD_DIR, req.params.filename);
+    if (fs.existsSync(filePath)) {
+        res.sendFile(filePath);
+    } else {
+        res.status(404).send(`
+        <!DOCTYPE html>
+        <html lang="id">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>404 - File Tidak Ditemukan</title>
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100vh;
+                    margin: 0;
+                    text-align: center;
+                    background: #f0f2f5;
+                }
+                .error-card {
+                    padding: 40px;
+                    max-width: 400px;
+                    width: 90%;
+                    background: white;
+                    border-radius: 20px;
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+                }
+                h1 { color: #4A90E2; font-size: 80px; margin: 0; }
+                p { color: #7f8c8d; margin-bottom: 30px; }
+                .btn-home {
+                    text-decoration: none;
+                    background: #4A90E2;
+                    color: white;
+                    padding: 12px 25px;
+                    border-radius: 10px;
+                    display: inline-block;
+                }
+                .btn-home:hover { background: #357ABD; }
+            </style>
+        </head>
+        <body>
+            <div class="error-card">
+                <h1>404</h1>
+                <h3>File Telah Kadaluarsa</h3>
+                <p>File ini sudah otomatis dihapus setelah ${FILE_EXPIRY_MINUTES} menit.</p>
+                <a href="/" class="btn-home">Kembali ke Beranda</a>
+            </div>
+        </body>
+        </html>
+        `);
+    }
+});
+
+module.exports = app;
+
+if (require.main === module) {
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => {
+        console.log(`UploadYuk Running on port ${PORT}`);
+        console.log(`Max file size: 10MB`);
+        console.log(`Auto delete after: 10 minutes`);
+    });
 }
