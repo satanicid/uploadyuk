@@ -188,5 +188,5 @@ app.get('/:filename', (req, res) => {
 
 
 app.listen(PORT, () => {
-    console.log(`UploadYuk Backend Running on port ${PORT}`);
+    console.log(`Aqua Upload Backend Running on port ${PORT}`);
 });
