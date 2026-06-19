@@ -1,183 +1,237 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
-const os = require('os'); 
 const crypto = require('crypto');
 
 const app = express();
-const PORT = 3000;
 
-if (!fs.existsSync('./uploads')) {
-    fs.mkdirSync('./uploads');
-}
+let files = [];
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const FILE_EXPIRY_MINUTES = 10;
 
-const generateRandomCode = (length) => {
-    return crypto.randomBytes(length).toString('hex').slice(0, length);
-};
-
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, './uploads');
-    },
-    filename: (req, file, cb) => {
-        const randomCode = generateRandomCode(5);
-        const extension = path.extname(file.originalname);
-        cb(null, randomCode + extension);
-    }
+const storage = multer.memoryStorage();
+const upload = multer({
+    storage: storage,
+    limits: { fileSize: MAX_FILE_SIZE }
 });
-
-const upload = multer({ storage: storage });
 
 app.use(express.static('public'));
 app.use(express.json());
 
-const dbPath = './data/database.json';
-if (!fs.existsSync(dbPath)) {
-    fs.writeFileSync(dbPath, JSON.stringify([]));
-}
-
-app.post('/api/v1/upload', upload.single('media'), (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
+const deleteExpiredFiles = () => {
+    const now = Date.now();
+    const expiryMs = FILE_EXPIRY_MINUTES * 60 * 1000;
+    const initialLength = files.length;
+    files = files.filter(file => (now - file.uploadTime) <= expiryMs);
+    if (files.length !== initialLength) {
+        console.log('Deleted ' + (initialLength - files.length) + ' expired files');
     }
+};
+setInterval(deleteExpiredFiles, 60 * 1000);
 
-    const db = JSON.parse(fs.readFileSync(dbPath));
-    const fileData = {
-        id: Date.now(),
-        originalName: req.file.originalname,
-        generatedName: req.file.filename,
-        url: `${req.protocol}://${req.get('host')}/${req.file.filename}`
-    };
-
-    db.push(fileData);
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-    res.json(fileData);
-});
-
-
-app.get('/api/admin/full-stats', (req, res) => {
-    const db = JSON.parse(fs.readFileSync(dbPath));
-    const stats = {
-        total: db.length,
-        images: db.filter(f => /\.(jpg|jpeg|png|gif|webp)$/i.test(f.generatedName)).length,
-        videos: db.filter(f => /\.(mp4|webm|mov|mkv)$/i.test(f.generatedName)).length,
-        others: db.filter(f => !/\.(jpg|jpeg|png|gif|webp|mp4|webm|mov|mkv)$/i.test(f.generatedName)).length
-    };
-    res.json(stats);
-});
-
-
-// API Hapus File
-app.delete('/api/admin/delete/:filename', (req, res) => {
-    const filename = req.params.filename;
-    const filePath = path.join(__dirname, 'uploads', filename);
-
-    // Hapus dari database.json
-    let db = JSON.parse(fs.readFileSync(dbPath));
-    db = db.filter(f => f.generatedName !== filename);
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-
-    // Hapus file dari folder uploads
-    if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        res.json({ success: true, message: 'File dihapus' });
-    } else {
-        res.status(404).json({ success: false, message: 'File tidak ditemukan' });
-    }
-});
-
-app.get('/api/admin/stats-system', (req, res) => {
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const usedMem = totalMem - freeMem;
-    
-    // Simulasi storage (karena Railway volume dibaca via mount path)
-    res.json({
-        ramPercent: ((usedMem / totalMem) * 100).toFixed(0),
-        ramText: `${(usedMem / 1024 / 1024 / 1024).toFixed(1)}GB / ${(totalMem / 1024 / 1024 / 1024).toFixed(1)}GB`,
-        platform: os.platform(),
-        uptime: (os.uptime() / 3600).toFixed(1) + ' Jam'
-    });
-});
-
-
-
-app.post('/api/admin/login', (req, res) => {
-    const { password } = req.body;
-    if (password === 'zackadmin') {
-        res.json({ success: true, token: 'zackadmin' });
-    } else {
-        res.status(401).json({ success: false, message: 'Password salah' });
-    }
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.get('/admin', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-
-app.get('/api/list', (req, res) => {
-    const db = JSON.parse(fs.readFileSync(dbPath));
-    res.json(db);
-});
-
 app.get('/docs', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'docs.html'));
 });
 
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+app.post('/api/v1/upload', upload.single('media'), (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        const randomCode = crypto.randomBytes(5).toString('hex');
+        const extension = path.extname(req.file.originalname);
+        const filename = randomCode + extension;
+
+        const fileData = {
+            id: Date.now(),
+            originalName: req.file.originalname,
+            generatedName: filename,
+            size: req.file.size,
+            sizeText: (req.file.size / 1024 / 1024).toFixed(2) + ' MB',
+            uploadTime: Date.now(),
+            expiresIn: FILE_EXPIRY_MINUTES + ' menit',
+            url: req.protocol + '://' + req.get('host') + '/' + filename,
+            data: req.file.buffer.toString('base64')
+        };
+
+        files.push(fileData);
+
+        res.json({
+            success: true,
+            message: 'File berhasil diupload!',
+            data: {
+                id: fileData.id,
+                originalName: fileData.originalName,
+                generatedName: fileData.generatedName,
+                size: fileData.sizeText,
+                expiresIn: fileData.expiresIn,
+                url: fileData.url
+            }
+        });
+    } catch (error) {
+        console.error('Upload error:', error);
+        res.status(500).json({ error: error.message });
+    }
 });
 
+app.get('/api/list', (req, res) => {
+    try {
+        const now = Date.now();
+        const expiryMs = FILE_EXPIRY_MINUTES * 60 * 1000;
+
+        const filesWithExpiry = files.map(file => {
+            const remaining = Math.max(0, (file.uploadTime + expiryMs - now) / 1000);
+            return {
+                id: file.id,
+                originalName: file.originalName,
+                generatedName: file.generatedName,
+                size: file.sizeText,
+                remainingSeconds: Math.floor(remaining),
+                remainingText: remaining > 0 ?
+                    Math.floor(remaining / 60) + 'm ' + Math.floor(remaining % 60) + 's' :
+                    'Expired'
+            };
+        });
+
+        res.json(filesWithExpiry);
+    } catch (error) {
+        console.error('List error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/admin/full-stats', (req, res) => {
+    try {
+        const now = Date.now();
+        const expiryMs = FILE_EXPIRY_MINUTES * 60 * 1000;
+        const activeFiles = files.filter(f => (now - f.uploadTime) < expiryMs);
+
+        const stats = {
+            total: files.length,
+            active: activeFiles.length,
+            expired: files.length - activeFiles.length,
+            images: files.filter(f => /\.(jpg|jpeg|png|gif|webp)$/i.test(f.generatedName)).length,
+            videos: files.filter(f => /\.(mp4|webm|mov|mkv)$/i.test(f.generatedName)).length,
+            others: files.filter(f => !/\.(jpg|jpeg|png|gif|webp|mp4|webm|mov|mkv)$/i.test(f.generatedName)).length,
+            totalSize: files.reduce((sum, f) => sum + (f.size || 0), 0),
+            totalSizeText: (files.reduce((sum, f) => sum + (f.size || 0), 0) / 1024 / 1024).toFixed(2) + ' MB'
+        };
+        res.json(stats);
+    } catch (error) {
+        console.error('Stats error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/admin/stats-system', (req, res) => {
+    try {
+        const os = require('os');
+        const totalMem = os.totalmem();
+        const freeMem = os.freemem();
+        const usedMem = totalMem - freeMem;
+
+        res.json({
+            ramPercent: ((usedMem / totalMem) * 100).toFixed(0),
+            ramText: (usedMem / 1024 / 1024 / 1024).toFixed(1) + 'GB / ' + (totalMem / 1024 / 1024 / 1024).toFixed(1) + 'GB',
+            platform: os.platform(),
+            uptime: (os.uptime() / 3600).toFixed(1) + ' Jam',
+            filesInMemory: files.length
+        });
+    } catch (error) {
+        console.error('System stats error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/admin/login', (req, res) => {
+    try {
+        const { password } = req.body;
+        if (password === 'zackadmin') {
+            res.json({ success: true, token: 'zackadmin' });
+        } else {
+            res.status(401).json({ success: false, message: 'Password salah' });
+        }
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.delete('/api/admin/delete/:filename', (req, res) => {
+    try {
+        const filename = req.params.filename;
+        const initialLength = files.length;
+        files = files.filter(f => f.generatedName !== filename);
+
+        if (files.length < initialLength) {
+            res.json({ success: true, message: 'File dihapus' });
+        } else {
+            res.status(404).json({ success: false, message: 'File tidak ditemukan' });
+        }
+    } catch (error) {
+        console.error('Delete error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 
 app.get('/:filename', (req, res) => {
-    const filePath = path.join(__dirname, 'uploads', req.params.filename);
-    if (fs.existsSync(filePath)) {
-        res.sendFile(filePath);
+    const filename = req.params.filename;
+    const file = files.find(f => f.generatedName === filename);
+
+    if (file) {
+        const buffer = Buffer.from(file.data, 'base64');
+        res.set('Content-Type', 'application/octet-stream');
+        res.set('Content-Disposition', 'inline; filename="' + file.originalName + '"');
+        res.send(buffer);
     } else {
         res.status(404).send(`
         <!DOCTYPE html>
-        <html lang="id">
+        <html>
         <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>File Tidak Ditemukan — UploadYuk</title>
+            <title>404 - File Tidak Ditemukan</title>
             <style>
-                :root { --sky-blue: #87CEEB; --deep-blue: #4A90E2; --text: #2c3e50; }
-                body { 
-                    font-family: 'Inter', -apple-system, sans-serif; 
-                    background: #fdfdfd; 
-                    display: flex; 
-                    align-items: center; 
-                    justify-content: center; 
-                    height: 100vh; 
-                    margin: 0; 
+                body {
+                    font-family: Arial, sans-serif;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100vh;
+                    margin: 0;
                     text-align: center;
+                    background: #f0f2f5;
                 }
-                .error-card { padding: 40px; max-width: 400px; width: 90%; }
-                h1 { color: var(--deep-blue); font-size: 80px; margin: 0; }
-                p { color: #7f8c8d; margin-bottom: 30px; }
-                .btn-home { 
-                    text-decoration: none; 
-                    background: var(--deep-blue); 
-                    color: white; 
-                    padding: 12px 25px; 
-                    border-radius: 10px; 
-                    font-weight: 600;
-                    box-shadow: 0 4px 15px rgba(74, 144, 226, 0.3);
-                    transition: 0.3s;
+                .error-card {
+                    padding: 40px;
+                    max-width: 400px;
+                    background: white;
+                    border-radius: 20px;
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
                 }
-                .btn-home:hover { transform: translateY(-3px); opacity: 0.9; }
-                img { width: 150px; margin-bottom: 20px; }
+                h1 { color: #4A90E2; font-size: 80px; margin: 0; }
+                .btn-home {
+                    text-decoration: none;
+                    background: #4A90E2;
+                    color: white;
+                    padding: 12px 25px;
+                    border-radius: 10px;
+                    display: inline-block;
+                }
             </style>
         </head>
         <body>
             <div class="error-card">
-                <img src="https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExMnU4eXZoY3M0eXN3eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4JmVwPXYxX2ludGVybmFsX2dpZl9ieV9pZCZjdD1n/H54feNXf6i4eAQubud/giphy.gif" alt="404 Not Found">
                 <h1>404</h1>
-                <h3>Waduh! File Hilang</h3>
-                <p>Maaf, file yang kamu cari tidak ada di server kami atau sudah dihapus.</p>
+                <h3>File Telah Kadaluarsa</h3>
+                <p>File ini sudah otomatis dihapus setelah ` + FILE_EXPIRY_MINUTES + ` menit.</p>
                 <a href="/" class="btn-home">Kembali ke Beranda</a>
             </div>
         </body>
@@ -186,7 +240,27 @@ app.get('/:filename', (req, res) => {
     }
 });
 
-
-app.listen(PORT, () => {
-    console.log(`Aqua Upload Backend Running on port ${PORT}`);
+app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        if (err.code === 'FILE_TOO_LARGE') {
+            return res.status(413).json({
+                error: 'File terlalu besar! Maksimal 10MB'
+            });
+        }
+        return res.status(400).json({ error: err.message });
+    }
+    console.error('Global error:', err);
+    res.status(500).json({ error: err.message });
 });
+
+module.exports = app;
+
+if (require.main === module) {
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => {
+        console.log('UploadYuk Running on port ' + PORT);
+        console.log('Max file size: 10MB');
+        console.log('Auto delete after: 10 minutes');
+        console.log('Files stored in memory (RAM)');
+    });
+        }
